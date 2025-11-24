@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ToxiScan - Additive Safety</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="bg-gray-50 text-gray-800 min-h-screen">
+    <div class="max-w-3xl mx-auto px-4 py-12">
+      <div class="text-center mb-10">
+        <h1 class="text-5xl font-bold text-gray-900 tracking-tight mb-2">
+          ToxiScan
+        </h1>
+        <p class="text-gray-500">
+          Multi-API Analysis for Food Safety & Toxicity
+        </p>
+      </div>
+
+      <div class="relative w-full max-w-xl mx-auto mb-12">
+        <form id="search-form" class="relative z-10">
+          <input
+            type="text"
+            id="search-input"
+            autocomplete="off"
+            placeholder="Type E-number (e.g., E330) or Name..."
+            class="w-full px-6 py-4 text-lg border-2 border-gray-300 rounded-xl focus:outline-none focus:border-blue-500 shadow-sm transition-colors"
+          />
+          <button
+            type="submit"
+            class="absolute right-3 top-3 bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition"
+          >
+            Scan
+          </button>
+        </form>
+
+        <ul
+          id="autocomplete-list"
+          class="absolute w-full bg-white border border-gray-200 rounded-lg shadow-xl mt-2 hidden max-h-60 overflow-y-auto z-20"
+        ></ul>
+      </div>
+
+      <div id="loader" class="hidden flex justify-center py-10">
+        <div
+          class="spinner border-4 border-gray-200 border-t-blue-600 rounded-full w-12 h-12 animate-spin"
+        ></div>
+      </div>
+
+      <div
+        id="result-card"
+        class="hidden bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100"
+      >
+        <div
+          class="bg-gray-900 p-6 flex justify-between items-center text-white"
+        >
+          <div>
+            <h2 id="res-ename" class="text-3xl font-bold"></h2>
+            <p id="res-name" class="text-gray-400 font-mono"></p>
+          </div>
+          <div
+            id="res-safety"
+            class="px-4 py-2 rounded-full font-bold uppercase text-sm tracking-wide bg-gray-700"
+          >
+            Scanning...
+          </div>
+        </div>
+
+        <div class="p-8 space-y-6">
+          <div class="flex items-center space-x-4">
+            <span class="text-gray-500 font-semibold uppercase text-sm"
+              >Detected Origin:</span
+            >
+            <span
+              id="res-origin"
+              class="px-3 py-1 rounded-md text-sm font-bold border"
+            >
+              Unknown
+            </span>
+          </div>
+
+          <div>
+            <h3 class="text-lg font-bold text-gray-800 mb-2">Definition</h3>
+            <p id="res-desc" class="text-gray-600 leading-relaxed"></p>
+          </div>
+
+          <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg">
+            <div class="flex items-start">
+              <svg
+                class="w-6 h-6 text-red-500 mr-3 mt-1"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                ></path>
+              </svg>
+              <div>
+                <h4 class="font-bold text-red-800">
+                  Toxicity & Dosage Limit (ADI)
+                </h4>
+                <p id="res-dosage" class="text-red-700 mt-1 italic"></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
