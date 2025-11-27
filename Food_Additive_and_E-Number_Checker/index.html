@@ -3,118 +3,433 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ToxiScan - Additive Safety</title>
+    <title>ToxiScan | Bio-Safety Analyzer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <style>
+      body {
+        font-family: "JetBrains Mono", monospace;
+        background-color: #0f172a; /* Slate 950 */
+        background-image: radial-gradient(
+          circle at 50% 0%,
+          #1e293b 0%,
+          #0f172a 70%
+        );
+        min-height: 100vh;
+      }
+
+      /* Custom Animations */
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .animate-result {
+        animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+
+      @keyframes scan {
+        0% {
+          left: -100%;
+        }
+        100% {
+          left: 100%;
+        }
+      }
+      .scanning-line {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 50%;
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(6, 182, 212, 0.2),
+          transparent
+        );
+        animation: scan 1.5s infinite linear;
+      }
+
+      /* Utilities */
+      .glass-panel {
+        background: rgba(30, 41, 59, 0.7);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(148, 163, 184, 0.1);
+      }
+
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #0f172a;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #334155;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #475569;
+      }
+    </style>
   </head>
-  <body class="bg-gray-50 text-gray-800 min-h-screen">
-    <div class="max-w-3xl mx-auto px-4 py-12">
-      <div class="text-center mb-10">
-        <h1 class="text-5xl font-bold text-gray-900 tracking-tight mb-2">
-          ToxiScan
-        </h1>
-        <p class="text-gray-500">
-          Multi-API Analysis for Food Safety & Toxicity
-        </p>
-      </div>
-
-      <div class="relative w-full max-w-xl mx-auto mb-12">
-        <form id="search-form" class="relative z-10">
-          <input
-            type="text"
-            id="search-input"
-            autocomplete="off"
-            placeholder="Type E-number (e.g., E330) or Name..."
-            class="w-full px-6 py-4 text-lg border-2 border-gray-300 rounded-xl focus:outline-none focus:border-blue-500 shadow-sm transition-colors"
-          />
-          <button
-            type="submit"
-            class="absolute right-3 top-3 bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition"
+  <body
+    class="text-slate-300 antialiased selection:bg-cyan-500/30 selection:text-cyan-200"
+  >
+    <nav
+      class="border-b border-slate-800/60 bg-slate-950/50 backdrop-blur-md sticky top-0 z-50"
+    >
+      <div
+        class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between"
+      >
+        <div class="flex items-center gap-3">
+          <div class="w-3 h-3 bg-cyan-500 rounded-full animate-pulse"></div>
+          <span class="text-xl font-bold tracking-tight text-white"
+            >TOXI<span class="text-cyan-400">SCAN</span></span
           >
-            Scan
-          </button>
-        </form>
+        </div>
+        <div class="text-xs text-slate-500 font-medium">SYS.ONLINE</div>
+      </div>
+    </nav>
 
-        <ul
-          id="autocomplete-list"
-          class="absolute w-full bg-white border border-gray-200 rounded-lg shadow-xl mt-2 hidden max-h-60 overflow-y-auto z-20"
-        ></ul>
+    <main class="max-w-4xl mx-auto px-6 py-12">
+      <div class="text-center mb-12">
+        <h1
+          class="text-3xl md:text-5xl font-bold text-white mb-4 tracking-tight"
+        >
+          Food Additive
+          <span
+            class="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-emerald-400"
+            >Intelligence</span
+          >
+        </h1>
+        <p class="text-slate-400 mb-8 text-sm md:text-base max-w-xl mx-auto">
+          Real-time safety aggregation from OpenFoodFacts, USDA, PubChem &
+          Wikipedia.
+        </p>
+
+        <div class="relative max-w-xl mx-auto group">
+          <div
+            class="absolute -inset-1 bg-gradient-to-r from-cyan-600 to-emerald-600 rounded-lg blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"
+          ></div>
+          <div
+            class="relative flex bg-slate-900 rounded-lg ring-1 ring-slate-700 shadow-2xl overflow-hidden"
+          >
+            <input
+              type="text"
+              id="searchInput"
+              list="additiveList"
+              class="w-full bg-transparent border-none text-white px-6 py-4 focus:outline-none focus:ring-0 placeholder-slate-600 text-lg"
+              placeholder="Search E-Code (E330) or Name..."
+              oninput="handleInput()"
+            />
+            <button
+              onclick="analyzeAdditive()"
+              class="bg-slate-800 hover:bg-slate-700 border-l border-slate-700 text-cyan-400 px-8 font-bold transition-colors"
+            >
+              SCAN
+            </button>
+          </div>
+          <datalist id="additiveList"></datalist>
+        </div>
       </div>
 
-      <div id="loader" class="hidden flex justify-center py-10">
+      <div id="loading" class="hidden my-12">
         <div
-          class="spinner border-4 border-gray-200 border-t-blue-600 rounded-full w-12 h-12 animate-spin"
-        ></div>
+          class="max-w-lg mx-auto bg-slate-900/50 border border-slate-800 rounded-lg h-32 relative overflow-hidden flex items-center justify-center"
+        >
+          <div class="scanning-line"></div>
+          <div class="flex flex-col items-center z-10">
+            <div
+              class="w-8 h-8 border-2 border-t-cyan-500 border-r-transparent border-b-cyan-500 border-l-transparent rounded-full animate-spin mb-3"
+            ></div>
+            <span
+              class="text-xs text-cyan-500 uppercase tracking-[0.2em] animate-pulse"
+              >Querying Global Databases</span
+            >
+          </div>
+        </div>
       </div>
 
       <div
-        id="result-card"
-        class="hidden bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100"
-      >
+        id="error"
+        class="hidden max-w-xl mx-auto bg-red-950/30 border border-red-500/50 text-red-200 p-4 rounded-lg text-center mb-10 backdrop-blur-sm"
+      ></div>
+
+      <div id="results" class="hidden animate-result">
         <div
-          class="bg-gray-900 p-6 flex justify-between items-center text-white"
+          class="glass-panel rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/5"
         >
-          <div>
-            <h2 id="res-ename" class="text-3xl font-bold"></h2>
-            <p id="res-name" class="text-gray-400 font-mono"></p>
-          </div>
           <div
-            id="res-safety"
-            class="px-4 py-2 rounded-full font-bold uppercase text-sm tracking-wide bg-gray-700"
+            class="bg-slate-900/50 p-6 md:p-8 border-b border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-6"
           >
-            Scanning...
-          </div>
-        </div>
+            <div>
+              <div class="flex items-center gap-3 mb-1">
+                <span
+                  id="resCode"
+                  class="text-xs font-bold px-2 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700 font-mono"
+                  >CODE</span
+                >
+                <span
+                  id="badgeUSDA"
+                  class="hidden text-[10px] font-bold px-2 py-1 rounded bg-blue-950 text-blue-300 border border-blue-800 flex items-center gap-1"
+                >
+                  <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path
+                      fill-rule="evenodd"
+                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                      clip-rule="evenodd"
+                    />
+                  </svg>
+                  USDA VERIFIED
+                </span>
+              </div>
+              <h2
+                id="resName"
+                class="text-3xl md:text-4xl font-bold text-white tracking-tight"
+              ></h2>
+            </div>
 
-        <div class="p-8 space-y-6">
-          <div class="flex items-center space-x-4">
-            <span class="text-gray-500 font-semibold uppercase text-sm"
-              >Detected Origin:</span
-            >
-            <span
-              id="res-origin"
-              class="px-3 py-1 rounded-md text-sm font-bold border"
-            >
-              Unknown
-            </span>
+            <div
+              id="badgeSafety"
+              class="px-5 py-3 rounded-xl border flex items-center gap-3 shadow-lg transition-colors duration-300"
+            ></div>
           </div>
 
-          <div>
-            <h3 class="text-lg font-bold text-gray-800 mb-2">Definition</h3>
-            <p id="res-desc" class="text-gray-600 leading-relaxed"></p>
-          </div>
-
-          <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg">
-            <div class="flex items-start">
-              <svg
-                class="w-6 h-6 text-red-500 mr-3 mt-1"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                ></path>
-              </svg>
+          <div
+            class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-800"
+          >
+            <div class="md:col-span-2 p-6 md:p-8 space-y-8">
               <div>
-                <h4 class="font-bold text-red-800">
-                  Toxicity & Dosage Limit (ADI)
-                </h4>
-                <p id="res-dosage" class="text-red-700 mt-1 italic"></p>
+                <h3
+                  class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2"
+                >
+                  Calculated Origin
+                </h3>
+                <div class="flex items-center gap-2">
+                  <div class="h-px w-8 bg-slate-700"></div>
+                  <span
+                    id="resOrigin"
+                    class="text-lg font-medium text-cyan-300"
+                  ></span>
+                </div>
+              </div>
+
+              <div>
+                <h3
+                  class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3"
+                >
+                  Analysis Summary
+                </h3>
+                <p
+                  id="resDesc"
+                  class="text-slate-400 leading-relaxed text-sm text-justify"
+                ></p>
+                <div class="mt-2 text-[10px] text-slate-600">
+                  Source: Wikipedia API & OpenFoodFacts
+                </div>
+              </div>
+
+              <div>
+                <h3
+                  class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4"
+                >
+                  Detected In
+                </h3>
+                <div
+                  id="productGrid"
+                  class="flex gap-4 overflow-x-auto pb-4 scrollbar-hide"
+                ></div>
+              </div>
+            </div>
+
+            <div
+              class="p-6 md:p-8 bg-slate-900/30 flex flex-col items-center justify-center relative"
+            >
+              <div
+                class="absolute top-6 left-6 text-xs font-bold text-slate-500 uppercase tracking-widest"
+              >
+                Molecular Structure
+              </div>
+
+              <div
+                class="w-full aspect-square bg-white rounded-xl p-4 flex items-center justify-center shadow-inner mt-6"
+              >
+                <img
+                  id="resImage"
+                  src=""
+                  alt="Structure"
+                  class="max-w-full max-h-full object-contain mix-blend-multiply opacity-90 hover:opacity-100 transition duration-500 hover:scale-105"
+                  onerror="this.style.display='none'; this.nextElementSibling.style.display='block'"
+                />
+                <div class="hidden text-center">
+                  <span class="text-4xl block mb-2">🧪</span>
+                  <span class="text-slate-400 text-xs"
+                    >Structure Unavailable</span
+                  >
+                </div>
+              </div>
+              <div class="mt-4 text-[10px] text-slate-600 font-mono">
+                Rendered by PubChem
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <script src="script.js"></script>
+      <footer
+        class="mt-20 text-center text-slate-600 text-xs border-t border-slate-800/50 pt-8"
+      >
+        <p>ToxiScan Student Project &copy; 2025</p>
+        <p class="mt-2">
+          Data provided for educational purposes only. Consult medical
+          professionals for dietary advice.
+        </p>
+      </footer>
+    </main>
+
+    <script>
+      let debounceTimer;
+
+      async function handleInput() {
+        const query = document.getElementById("searchInput").value;
+        if (query.length < 2) return;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/autocomplete?q=${query}`);
+            if (res.ok) {
+              const matches = await res.json();
+              const dl = document.getElementById("additiveList");
+              dl.innerHTML = matches
+                .map((m) => `<option value="${m}">`)
+                .join("");
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        }, 300);
+      }
+
+      async function analyzeAdditive() {
+        const query = document.getElementById("searchInput").value;
+        if (!query) return;
+
+        // State Management
+        const loader = document.getElementById("loading");
+        const results = document.getElementById("results");
+        const errorBox = document.getElementById("error");
+
+        loader.classList.remove("hidden");
+        results.classList.add("hidden");
+        results.classList.remove("animate-result"); // Reset animation
+        errorBox.classList.add("hidden");
+
+        try {
+          const response = await fetch(
+            `/api/analyze/${encodeURIComponent(query)}`
+          );
+          const data = await response.json();
+
+          if (!response.ok) throw new Error(data.detail || "Server Error");
+
+          // --- POPULATE DATA ---
+
+          // Header
+          document.getElementById("resName").textContent = data.identity.name;
+          document.getElementById("resCode").textContent = data.identity.code;
+
+          // Safety Badge (Styled)
+          const safeBadge = document.getElementById("badgeSafety");
+          // Map API colors to our specific Tailwind styles
+          let colorClass = "";
+          let borderColor = "";
+
+          if (data.safety.color.includes("red")) {
+            colorClass = "bg-red-950/40 text-red-200";
+            borderColor = "border-red-500/50";
+          } else if (data.safety.color.includes("yellow")) {
+            colorClass = "bg-yellow-950/40 text-yellow-200";
+            borderColor = "border-yellow-500/50";
+          } else {
+            colorClass = "bg-emerald-950/40 text-emerald-200";
+            borderColor = "border-emerald-500/50";
+          }
+
+          safeBadge.className = `px-5 py-3 rounded-xl border flex items-center gap-3 shadow-lg ${colorClass} ${borderColor}`;
+          safeBadge.innerHTML = `
+                    <span class="text-2xl">${data.safety.icon}</span>
+                    <div class="flex flex-col">
+                        <span class="text-xs uppercase opacity-70 font-bold tracking-wider">Safety Profile</span>
+                        <span class="font-bold leading-none">${data.safety.label}</span>
+                    </div>
+                `;
+
+          // USDA Badge Logic
+          const usda = document.getElementById("badgeUSDA");
+          data.usda_verified
+            ? usda.classList.remove("hidden")
+            : usda.classList.add("hidden");
+
+          // Content
+          document.getElementById("resOrigin").textContent = data.origin;
+          document.getElementById("resDesc").textContent = data.description;
+
+          // Image
+          const img = document.getElementById("resImage");
+          img.style.display = "block";
+          img.nextElementSibling.style.display = "none";
+          img.src = data.structure_image;
+
+          // Products (Styled)
+          const grid = document.getElementById("productGrid");
+          grid.innerHTML = "";
+          if (data.products && data.products.length > 0) {
+            data.products.forEach((p) => {
+              const d = document.createElement("div");
+              d.className =
+                "flex flex-col gap-2 w-20 shrink-0 group cursor-pointer";
+              d.innerHTML = `
+                            <div class="w-20 h-20 bg-white rounded-lg p-1 overflow-hidden shadow-sm transition group-hover:scale-105 group-hover:shadow-cyan-500/20">
+                                <img src="${
+                                  p.image_front_small_url ||
+                                  "https://placehold.co/100?text=No+Img"
+                                }" class="w-full h-full object-contain">
+                            </div>
+                            <span class="text-[10px] text-center text-slate-500 group-hover:text-cyan-400 transition leading-tight truncate px-1">${
+                              p.product_name || "Unknown"
+                            }</span>
+                        `;
+              grid.appendChild(d);
+            });
+          } else {
+            grid.innerHTML =
+              '<span class="text-sm text-slate-600 italic py-4">No commercial products found containing this additive.</span>';
+          }
+
+          // Show Results
+          loader.classList.add("hidden");
+          results.classList.remove("hidden");
+          void results.offsetWidth; // Trigger reflow for animation
+          results.classList.add("animate-result");
+        } catch (err) {
+          console.error(err);
+          errorBox.innerHTML = `<span class="font-bold">System Error:</span> ${err.message}`;
+          errorBox.classList.remove("hidden");
+          loader.classList.add("hidden");
+        }
+      }
+    </script>
   </body>
 </html>

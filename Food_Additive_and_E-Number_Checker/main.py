@@ -1,200 +1,289 @@
-import re
-import logging
-from contextlib import asynccontextmanager
-from typing import List
-
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-import httpx
 import os
+import re
+import asyncio
+import logging
+import traceback
+import urllib.parse
+from contextlib import asynccontextmanager
+from typing import List, Dict
 
-# Configure Logging
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+from dotenv import load_dotenv
+import httpx
+
+load_dotenv()
+
+# --- Configuration ---
+USDA_API_KEY = os.getenv("USDA_API_KEY")
+USDA_ENDPOINT = "https://api.nal.usda.gov/fdc/v1/foods/search"
+OFF_TAXONOMY_URL = "https://static.openfoodfacts.org/data/taxonomies/additives.json"
+OFF_ADDITIVE_URL = "https://world.openfoodfacts.org/api/v2/additive"
+OFF_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
+WIKI_API_URL = "https://en.wikipedia.org/api/rest_v1/page/summary"
+PUBCHEM_CID_URL = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{}/cids/JSON"
+PUBCHEM_IMG_URL = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{}/PNG?record_type=2d&image_size=300x300"
+
+API_HEADERS = {"User-Agent": "ToxiScan-StudentProject/1.0"}
+
+# --- Hybrid Safety Logic: Hardcoded Overrides ---
+KNOWN_RISKS = {
+    # High Risk / Avoid
+    "e250": "high", "e251": "high", "e249": "high", "e252": "high", # Nitrites/Nitrates
+    "e621": "moderate", # MSG
+    "e951": "moderate", "e950": "moderate", # Aspartame/Acesulfame K
+    "e102": "moderate", "e129": "moderate", "e133": "moderate", # Artificial Colors
+    "e171": "high", # Titanium Dioxide (Banned in EU)
+    "e220": "moderate", # Sulfur dioxide
+    "e211": "moderate", # Sodium benzoate
+    "e320": "high", "e321": "high", # BHA / BHT
+    "e924": "high" # Potassium bromate
+}
+
+# --- Global Storage ---
+additive_taxonomy: Dict[str, str] = {}
+taxonomy_list: List[str] = []
+
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# --- IN-MEMORY DATABASE FOR AUTOCOMPLETE ---
-additive_index: List[str] = []
+logger = logging.getLogger("ToxiScan")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global additive_index
-    taxonomy_url = "https://world.openfoodfacts.org/data/taxonomies/additives.json"
-    logger.info("Fetching Additive Taxonomy for Autocomplete...")
-    
-    async with httpx.AsyncClient() as client:
+    """Load taxonomy on startup."""
+    async with httpx.AsyncClient(headers=API_HEADERS, timeout=15.0) as client:
         try:
-            resp = await client.get(taxonomy_url)
+            logger.info("⏳ Loading Additive Taxonomy...")
+            resp = await client.get(OFF_TAXONOMY_URL)
             if resp.status_code == 200:
                 data = resp.json()
-                temp_list = []
                 for key, value in data.items():
-                    if 'name' in value and 'en' in value['name']:
-                        e_code = key.split(':')[-1].upper()
-                        name = value['name']['en']
-                        temp_list.append(f"{e_code} - {name}")
-                
-                additive_index = sorted(temp_list)
-                logger.info(f"Loaded {len(additive_index)} additives into memory.")
+                    code = key.split(':')[-1].lower()
+                    additive_taxonomy[code] = code
+                    taxonomy_list.append(code)
+                    
+                    names = value.get('name', {})
+                    if 'en' in names:
+                        name_lower = names['en'].lower()
+                        additive_taxonomy[name_lower] = code
+                        taxonomy_list.append(names['en'])
+                logger.info(f"✅ Taxonomy Loaded: {len(taxonomy_list)} entries ready.")
             else:
-                logger.error("Failed to load taxonomy.")
+                logger.warning(f"⚠️ Taxonomy failed to load. Status: {resp.status_code}")
         except Exception as e:
-            logger.error(f"Startup Error: {e}")
-            
+            logger.error(f"❌ Taxonomy Error: {e}")
     yield
-    additive_index.clear()
 
-app = FastAPI(title="ToxiScan API", lifespan=lifespan)
+app = FastAPI(lifespan=lifespan)
+templates = Jinja2Templates(directory=".")
 
-# CORS Configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- HELPER FUNCTIONS ---
-
-def extract_origin(text: str) -> str:
-    text_lower = text.lower()
-    synthetic_keywords = ["synthetic", "artificial", "manufactured", "petroleum", "chemical synthesis", "derived from coal"]
-    natural_keywords = ["natural", "extracted from", "plant", "animal", "insect", "fermentation", "found in"]
+# --- Helper Logic ---
+def analyze_safety(data: dict, code: str, description: str) -> dict:
+    """
+    Determines safety using 3 checks:
+    1. Hardcoded 'Known Bad' list.
+    2. API Data (if available).
+    3. Keyword scan of the Wikipedia description.
+    """
+    risk_level = "low" # Default
     
-    # Priority check
-    for word in synthetic_keywords:
-        if word in text_lower:
-            return "Synthetic"
-    for word in natural_keywords:
-        if word in text_lower:
-            return "Natural"
-    return "Unknown"
+    # Check 1: Hardcoded List (Most Reliable)
+    if code and code in KNOWN_RISKS:
+        risk_level = KNOWN_RISKS[code]
 
-def extract_dosage(text: str) -> str:
-    # Look for "ADI", "Acceptable Daily Intake", or number patterns like "40 mg/kg"
-    regex_pattern = r"([^.]*?(?:ADI|acceptable daily intake|mg\/kg)[^.]*\.)"
-    match = re.search(regex_pattern, text, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    return "No specific dosage limit found in summary."
+    # Check 2: API Data (OpenFoodFacts)
+    elif data:
+        api_risk = data.get("overexposure_risk", {}).get("risk")
+        if api_risk:
+            risk_level = api_risk
 
-# --- ROUTES ---
+    # Check 3: Text Analysis (Fallback)
+    # If we still think it's low, scan the text for danger words
+    if risk_level == "low" and description:
+        text = description.lower()
+        high_keywords = ["carcinogen", "cancer", "banned", "toxic", "DNA damage"]
+        mod_keywords = ["hyperactivity", "allergy", "asthma", "migraine", "intolerance", "children"]
+        
+        if any(k in text for k in high_keywords):
+            risk_level = "high"
+        elif any(k in text for k in mod_keywords):
+            risk_level = "moderate"
 
-@app.get("/api/v1/autocomplete")
-async def autocomplete(q: str = Query(..., min_length=1)):
-    q_clean = q.lower()
-    # Simple search: checks if query is inside the string
-    matches = [item for item in additive_index if q_clean in item.lower()]
-    return matches[:5]
+    # --- Return the correct badge ---
+    if risk_level == "high":
+        return {"label": "High Risk / Avoid", "color": "bg-red-600 text-white", "icon": "⚠️"}
+    elif risk_level == "moderate":
+        return {"label": "Moderate Caution", "color": "bg-yellow-500 text-black", "icon": "✋"}
+    else:
+        return {"label": "Safe / Low Risk", "color": "bg-emerald-600 text-white", "icon": "✅"}
 
-@app.get("/api/v1/search")
-async def search_additive(query: str):
-    # If user selects "E330 - Citric Acid", we split it.
-    # If user types "E330", we keep it.
-    clean_query = query.split("-")[0].strip().lower()
+def analyze_origin(summary: str) -> str:
+    if not summary: return "Origin Unknown"
+    text = summary.lower()
+    synthetic = ["petroleum", "artificial", "synthetic", "lab", "chemical synthesis", "coal tar", "preservative"]
+    natural = ["plant", "extracted", "natural", "fruit", "vegetable", "fermentation", "animal", "vitamin", "mineral"]
     
-    result = {
-        "eNumber": clean_query.upper(),
-        "name": "Unknown",
-        "safety": "unknown",
-        "origin": "Unknown",
-        "dosage": "Data unavailable",
-        "description": "No description available."
-    }
+    if any(k in text for k in synthetic): return "Synthetic / Artificial"
+    if any(k in text for k in natural): return "Natural Origin"
+    return "Origin Unknown"
 
-    # IMPORTANT: Wikipedia blocks requests without a User-Agent!
-    headers = {
-        "User-Agent": "ToxiScanStudentProject/1.0 (contact@example.com)"
-    }
+# --- Fetchers ---
+async def fetch_off_data(client, code):
+    try:
+        if not code: return None
+        # Ensure code is clean (e.g. e330)
+        clean_code = code.split(' ')[0] 
+        resp = await client.get(f"{OFF_ADDITIVE_URL}/{clean_code}")
+        return resp.json() if resp.status_code == 200 else None
+    except: return None
 
-    async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+async def fetch_wiki_data(client, name):
+    try:
+        if not name: return None
+        # CLEANUP: "E330 - Citric Acid" -> "Citric_Acid"
+        # 1. Remove E-code prefix if present
+        name = re.sub(r'^[eE]\d+\s*[-–]\s*', '', name)
         
-        # STEP A: OpenFoodFacts
-        try:
-            # We assume input is an E-number (e.g., e330). OFF requires 'e' prefix usually.
-            if not clean_query.startswith('e') and clean_query.isdigit():
-                search_query = f"e{clean_query}"
-            else:
-                search_query = clean_query
-
-            off_url = f"https://world.openfoodfacts.org/api/v2/additive/{search_query}"
-            logger.info(f"Querying OFF: {off_url}")
-            
-            off_resp = await client.get(off_url)
-            
-            if off_resp.status_code == 200:
-                off_data = off_resp.json()
-                
-                # Try to get Name
-                if 'name' in off_data and 'en' in off_data['name']:
-                     result['name'] = off_data['name']['en']
-                
-                # Try to get Wiki Data ID (helps confirm it exists)
-                if 'wikidata' in off_data:
-                    result['safety'] = "safe" # Default if valid additive found
-                    
-                # Advanced: Check for "Overexposure Risk" field in OFF
-                if 'topics' in off_data:
-                    topics = str(off_data['topics']).lower()
-                    if 'risk' in topics or 'alert' in topics:
-                        result['safety'] = "caution"
-
-        except Exception as e:
-            logger.error(f"OFF API Error: {e}")
-
-        # STEP B: Wikipedia
-        # If OFF failed to find a name, we can't search Wiki easily.
-        # Fallback: if result['name'] is still "Unknown", try searching Wiki with the E-number directly? 
-        # Usually better to search with the Name if OFF gave us one.
+        # 2. Format for Wiki (Title Case, Underscores)
+        clean = name.strip().title().replace(" ", "_")
         
-        search_term = result['name'] if result['name'] != "Unknown" else clean_query
+        url = f"{WIKI_API_URL}/{clean}"
+        resp = await client.get(url)
+        return resp.json() if resp.status_code == 200 else None
+    except: return None
+
+async def fetch_usda(client, name):
+    if not USDA_API_KEY or not name: return False
+    try:
+        # Cleanup name for USDA search as well
+        clean_name = re.sub(r'^[eE]\d+\s*[-–]\s*', '', name)
+        params = {"api_key": USDA_API_KEY, "query": clean_name, "dataType": ["Foundation", "SR Legacy"], "pageSize": 1}
+        resp = await client.get(USDA_ENDPOINT, params=params)
+        if resp.status_code == 200:
+            d = resp.json()
+            if d.get("totalHits", 0) > 0:
+                food_name = d["foods"][0]["description"].lower()
+                return clean_name.lower() in food_name
+    except: pass
+    return False
+
+async def fetch_products(client, code, name):
+    try:
+        q = code if code else name
+        if not q: return []
+        params = {"additives_tags": q, "page_size": 3, "fields": "product_name,image_front_small_url"}
+        resp = await client.get(OFF_SEARCH_URL, params=params)
+        return resp.json().get("products", []) if resp.status_code == 200 else []
+    except: return []
+
+async def fetch_pubchem_cid(client, name):
+    try:
+        if not name: return None
+        # Remove E-code junk before asking PubChem
+        clean_name = re.sub(r'^[eE]\d+\s*[-–]\s*', '', name).strip()
         
-        try:
-            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{search_term}"
-            logger.info(f"Querying Wiki: {wiki_url}")
+        encoded_name = urllib.parse.quote(clean_name)
+        url = PUBCHEM_CID_URL.format(encoded_name)
+        
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            data = resp.json()
+            cids = data.get("IdentifierList", {}).get("CID", [])
+            if cids: return cids[0]
+    except: pass
+    return None
+
+# --- Endpoints ---
+@app.get("/", response_class=HTMLResponse)
+async def read_index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/api/autocomplete")
+async def autocomplete(q: str):
+    q_lower = q.lower()
+    matches = [x for x in taxonomy_list if q_lower in x.lower()]
+    return matches[:10]
+
+@app.get("/api/analyze/{query}")
+async def analyze_endpoint(query: str):
+    try:
+        query_clean = query.lower().strip()
+        
+        # --- INPUT CLEANING STEP ---
+        # If input is "E330 - Citric Acid", split it.
+        # Regex looks for: Starts with E+digits, then separator, then Name
+        match = re.match(r"^([e]\d+)\s*[-–_]\s*(.+)$", query_clean)
+        
+        if match:
+            e_code = match.group(1) # e330
+            search_name = match.group(2) # citric acid
+        else:
+            # Standard lookup
+            e_code = additive_taxonomy.get(query_clean)
+            if not e_code and query_clean.startswith('e') and any(c.isdigit() for c in query_clean):
+                 e_code = query_clean
+            search_name = query_clean
+
+        logger.info(f"Parsed -> Code: {e_code}, Name: {search_name}")
+
+        async with httpx.AsyncClient(headers=API_HEADERS, timeout=20.0) as client:
             
-            wiki_resp = await client.get(wiki_url)
+            # 1. Identity (Use Code)
+            off_data = await fetch_off_data(client, e_code)
             
-            if wiki_resp.status_code == 200:
-                wiki_data = wiki_resp.json()
-                if 'extract' in wiki_data:
-                    full_text = wiki_data['extract']
-                    result['description'] = full_text
-                    result['origin'] = extract_origin(full_text)
-                    result['dosage'] = extract_dosage(full_text)
-                    
-                    # Refine Safety based on text analysis
-                    lower_text = full_text.lower()
-                    if "carcinogen" in lower_text or "banned" in lower_text or "cancer" in lower_text:
-                        result['safety'] = "high-risk"
-                    elif "allergic" in lower_text or "hyperactivity" in lower_text or "asthma" in lower_text:
-                         if result['safety'] != "high-risk":
-                            result['safety'] = "caution"
-                    elif result['safety'] == "unknown":
-                        result['safety'] = "safe" # If found in wiki but no scary words, assume safe
-            else:
-                logger.warning(f"Wiki returned status {wiki_resp.status_code}")
+            # 2. Resolve Canonical Name
+            # If OFF gave us a good name, prefer it. Otherwise use our cleaned search_name.
+            canonical_name = search_name
+            if off_data:
+                names = off_data.get("display_name_translations", {})
+                canonical_name = names.get("en", names.get("fr", search_name))
+            
+            logger.info(f"Canonical Name for API Search: {canonical_name}")
 
-        except Exception as e:
-            logger.error(f"Wiki API Error: {e}")
+            # 3. Parallel Fetch (Use Name)
+            wiki_task = fetch_wiki_data(client, canonical_name)
+            usda_task = fetch_usda(client, canonical_name)
+            prod_task = fetch_products(client, e_code, canonical_name)
+            cid_task = fetch_pubchem_cid(client, canonical_name)
+            
+            wiki_data, usda_verified, products, pubchem_cid = await asyncio.gather(
+                wiki_task, usda_task, prod_task, cid_task
+            )
 
-    return result
+        # --- Aggregate ---
+        
+        description = "Description unavailable."
+        if wiki_data:
+            description = wiki_data.get("extract", "Description unavailable.")
 
-# ==========================================
-# LOCAL SERVING LOGIC (KEEP THIS FOR TESTING)
-# ==========================================
-@app.get("/")
-async def read_root():
-    if os.path.exists('index.html'):
-        return FileResponse('index.html')
-    return {"error": "index.html not found"}
+        # FIXED: Passing all 3 arguments (Data, Code, Description)
+        safety = analyze_safety(off_data, e_code, description)
+        
+        origin = analyze_origin(description)
+        
+        # Image Logic
+        img_url = ""
+        if pubchem_cid:
+            img_url = PUBCHEM_IMG_URL.format(pubchem_cid)
+        else:
+            # Last resort fallback
+            safe_name = urllib.parse.quote(canonical_name)
+            img_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{safe_name}/PNG?record_type=2d&image_size=300x300"
 
-@app.get("/{filename}")
-async def serve_static(filename: str):
-    allowed = {".html", ".css", ".js", ".png", ".ico"}
-    _, ext = os.path.splitext(filename)
-    if ext in allowed and os.path.exists(filename):
-        return FileResponse(filename)
-    return {"error": "File not found"}
+        return JSONResponse({
+            "identity": {
+                "name": canonical_name.title(),
+                "code": e_code.upper() if e_code else "Unknown"
+            },
+            "safety": safety,
+            "origin": origin,
+            "description": description,
+            "usda_verified": usda_verified,
+            "structure_image": img_url,
+            "products": products
+        })
+
+    except Exception as e:
+        error_msg = traceback.format_exc()
+        logger.error(f"❌ BACKEND ERROR:\n{error_msg}")
+        return JSONResponse(status_code=500, content={"detail": str(e)})
