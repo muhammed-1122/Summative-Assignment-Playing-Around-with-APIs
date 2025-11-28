@@ -39,7 +39,7 @@ The primary goal of ToxiScan is to solve the opacity of food labeling. While con
 
 ToxiScan is deployed across a 3-server cluster using a **Microservices-style architecture**.
 
-```mermaid
+```
 graph LR
     User[Client Browser] -- HTTP Request --> LB[Load Balancer (Nginx)]
     LB -- Round Robin --> Web1[Web-01 (Nginx + FastAPI)]
