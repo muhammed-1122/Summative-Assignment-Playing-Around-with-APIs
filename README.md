@@ -94,7 +94,7 @@ NLP Keyword Scanning: If the above fail, it scans the description text for keywo
 | **Network** | HTTPX | Asynchronous HTTP client for external API calls. |
 | **Server** | Uvicorn / Gunicorn | ASGI Server for production performance. |
 | **Proxy** | Nginx | Reverse Proxy and Static Asset Server. |
-| **Balancing** | HAProxy | Layer 7 Load Balancer. |
+| **Process control** | Systemd | Service management & auto-restart.. |
 
 ---
 ## 🚀 Local Development Guide
